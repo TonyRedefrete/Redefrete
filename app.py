@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from pathlib import Path
+import io
+from office365.runtime.auth.user_credential import UserCredential
+from office365.sharepoint.client_context import ClientContext
 
 st.set_page_config(page_title="REDEFRETE", layout="wide", initial_sidebar_state="expanded")
 
@@ -18,13 +21,45 @@ section[data-testid="stSidebar"]{background:#F9FAFB;border-right:1px solid #E5E7
 </style>
 """, unsafe_allow_html=True)
 
-@st.cache_data(ttl=5)
-def load():
+# --- FUNÇÃO QUE CARREGA DO SHAREPOINT OU LOCAL ---
+@st.cache_data(ttl=60)
+def load_local():
     df = pd.read_excel(EXCEL).fillna("")
     df.columns = [c.strip() for c in df.columns]
     return df
 
-df = load()
+def load_sharepoint(email, senha):
+    site_url = "https://vlooz.sharepoint.com/sites/secretaria"
+    file_path = "/sites/secretaria/Documentos Compartilhados/Base de Prestadores de Serviço.xlsx"
+    ctx = ClientContext(site_url).with_credentials(UserCredential(email, senha))
+    file_content = ctx.web.get_file_by_server_relative_url(file_path).read()
+    df = pd.read_excel(io.BytesIO(file_content)).fillna("")
+    df.columns = [c.strip() for c in df.columns]
+    return df
+
+# --- SIDEBAR LOGIN ---
+with st.sidebar:
+    st.markdown("## 🔐 Atualização SharePoint")
+    st.caption("Se deixar em branco, usa o Excel do GitHub")
+    email = st.text_input("E-mail Redefrete")
+    senha = st.text_input("Senha", type="password")
+    btn = st.button("Carregar do SharePoint", use_container_width=True, type="primary")
+    
+    st.divider()
+    st.markdown("## 🔍 Filtros")
+    # os filtros vão depois
+
+if btn and email and senha:
+    try:
+        with st.spinner("Baixando do SharePoint..."):
+            df = load_sharepoint(email, senha)
+        st.sidebar.success("Dados do SharePoint!")
+    except Exception as e:
+        st.sidebar.error(f"Erro: {e}")
+        st.sidebar.info("Se tem 2 fatores ativado, crie uma senha de app em account.microsoft.com > Segurança")
+        df = load_local()
+else:
+    df = load_local()
 
 C_NOME = "Nome da empresa / Prestador"
 C_SERV = "Serviço Prestado"
@@ -33,23 +68,20 @@ C_FDS = "Atende FINAL DE SEMANA? (Sim/Não)"
 C_CONT = "Contato (telefone / e-mail)"
 C_OBS = "Observações"
 
-# HEADER CON TU LOGO REAL
+# HEADER
 col_logo, col_title = st.columns([1, 6])
 with col_logo:
     if LOGO.exists():
         st.image(str(LOGO), width=180)
-    else:
-        st.error("logo.png no encontrado")
 with col_title:
     st.markdown("<h1 style='color:#111827;margin:0'>BASE DE PRESTADORES</h1><p style='color:#E10600;margin:0;font-weight:800;letter-spacing:2px'>REDEFRETE</p>", unsafe_allow_html=True)
 
-# FILTROS
+# FILTROS (continua na sidebar)
 with st.sidebar:
-    st.markdown("## 🔍 Filtros")
     busca = st.text_input("Buscar", placeholder="Nome, cidade, serviço...")
-    f_cid = st.multiselect("Cidade", sorted(df[C_CID].dropna().unique()), placeholder="Escolha...", label_visibility="collapsed")
-    f_serv = st.multiselect("Serviço", sorted(df[C_SERV].dropna().unique()), placeholder="Escolha...", label_visibility="collapsed")
-    f_fds = st.selectbox("FDS", ["Todos","Sim","Não"], label_visibility="collapsed")
+    f_cid = st.multiselect("Cidade", sorted(df[C_CID].dropna().unique()), placeholder="Escolha Cidade")
+    f_serv = st.multiselect("Serviço", sorted(df[C_SERV].dropna().unique()), placeholder="Escolha Serviço")
+    f_fds = st.selectbox("FDS", ["Todos","Sim","Não"])
     if st.button("Limpar filtros", use_container_width=True):
         st.rerun()
 
